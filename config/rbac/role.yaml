@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: influx-log-viewer
+  namespace: influxdb3
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: influx-log-viewer
+rules:
+  - apiGroups: [observability.influxdata.com]
+    resources: [logpipelines]
+    verbs: [get, list, watch, update, patch]
+  - apiGroups: [observability.influxdata.com]
+    resources: [logpipelines/status]
+    verbs: [get, update, patch]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: influx-log-viewer
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: influx-log-viewer
+subjects:
+  - kind: ServiceAccount
+    name: influx-log-viewer
+    namespace: influxdb3

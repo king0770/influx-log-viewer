@@ -1,0 +1,13 @@
+apiVersion: observability.influxdata.com/v1alpha1
+kind: LogPipeline
+metadata:
+  name: influxdb3-logs
+  namespace: influxdb3
+spec:
+  targetNamespace: influxdb3
+  podSelector:
+    app.kubernetes.io/name: influxdb3-enterprise
+  influxURL: http://db3-influxdb3-enterprise-ingester.influxdb3.svc.cluster.local:8181
+  database: logs
+  batchSize: 500
+  flushInterval: 1s

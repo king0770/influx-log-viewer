@@ -1,0 +1,89 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: influx-log-viewer
+  namespace: influxdb3
+  labels:
+    app.kubernetes.io/name: influx-log-viewer
+spec:
+  serviceName: influx-log-viewer-headless
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: influx-log-viewer
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: influx-log-viewer
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: getup
+      serviceAccountName: influx-log-viewer
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: log-viewer
+          image: king0770/influx-log-viewer:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: influx-log-viewer-config
+          env:
+            - name: INFLUXDB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: influxdb3-admin-token
+                  key: TOKEN
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: "1", memory: 512Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+            readOnlyRootFilesystem: true
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: influx-log-viewer
+  namespace: influxdb3
+spec:
+  selector:
+    app.kubernetes.io/name: influx-log-viewer
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: influx-log-viewer-headless
+  namespace: influxdb3
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app.kubernetes.io/name: influx-log-viewer
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

@@ -1,0 +1,492 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Influx Log Viewer</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --canvas: #08090a;
+      --sidebar: #0d0e10;
+      --surface: rgba(255,255,255,.025);
+      --surface-hover: rgba(255,255,255,.045);
+      --surface-active: rgba(113,112,255,.075);
+      --line: rgba(255,255,255,.075);
+      --line-soft: rgba(255,255,255,.045);
+      --text: #f7f8f8;
+      --text-2: #d0d6e0;
+      --muted: #8a8f98;
+      --quiet: #62666d;
+      --accent: #7170ff;
+      --accent-hover: #828fff;
+      --green: #38c793;
+      --amber: #e8a84c;
+      --red: #fb7185;
+      --radius: 8px;
+      font-synthesis: none;
+    }
+    * { box-sizing: border-box }
+    html, body { height: 100% }
+    body {
+      margin: 0;
+      overflow: hidden;
+      background: var(--canvas);
+      color: var(--text);
+      font: 13px/1.45 Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-feature-settings: "cv01", "ss03";
+    }
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background-image: linear-gradient(rgba(255,255,255,.012) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.012) 1px, transparent 1px);
+      background-size: 32px 32px;
+      mask-image: linear-gradient(to bottom, #000, transparent 58%);
+    }
+    button, input, select { font: inherit }
+    button { color: inherit }
+    .topbar {
+      position: relative;
+      z-index: 4;
+      height: 62px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 0 18px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(8,9,10,.92);
+      backdrop-filter: blur(18px);
+    }
+    .brand-mark {
+      width: 30px;
+      height: 30px;
+      display: grid;
+      place-items: center;
+      border: 1px solid rgba(130,143,255,.25);
+      border-radius: 8px;
+      color: #a8b1ff;
+      background: linear-gradient(145deg, rgba(113,112,255,.22), rgba(113,112,255,.05));
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.08), 0 0 24px rgba(113,112,255,.12);
+    }
+    .brand-mark svg { width: 17px; height: 17px }
+    .brand-copy { display: flex; align-items: baseline; gap: 9px; min-width: 0 }
+    .brand-copy h1 { margin: 0; font-size: 14px; font-weight: 590; letter-spacing: -.18px }
+    .breadcrumb { color: var(--quiet); font-size: 12px }
+    .top-actions { margin-left: auto; display: flex; align-items: center; gap: 10px }
+    .connection {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      min-width: 86px;
+      padding: 5px 9px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--text-2);
+      background: rgba(255,255,255,.025);
+      font-size: 11px;
+      font-weight: 510;
+    }
+    .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 3px rgba(56,199,147,.1) }
+    .connection.reconnecting .status-dot { background: var(--amber); box-shadow: 0 0 0 3px rgba(232,168,76,.1) }
+    .connection.error .status-dot { background: var(--red); box-shadow: 0 0 0 3px rgba(251,113,133,.1) }
+    .shortcut { color: var(--quiet); border: 1px solid var(--line); border-bottom-color: rgba(255,255,255,.13); border-radius: 5px; padding: 3px 6px; background: var(--surface); font: 10px ui-monospace, SFMono-Regular, Menlo, monospace }
+    .shell { position: relative; display: grid; grid-template-columns: 258px minmax(0,1fr); height: calc(100vh - 62px) }
+    .sidebar {
+      overflow: auto;
+      padding: 20px 16px;
+      border-right: 1px solid var(--line);
+      background: rgba(13,14,16,.88);
+      backdrop-filter: blur(12px);
+    }
+    .section-kicker { margin: 0 2px 14px; color: var(--quiet); font-size: 10px; font-weight: 590; letter-spacing: .1em; text-transform: uppercase }
+    .field { margin-bottom: 14px }
+    .field label { display: flex; justify-content: space-between; margin: 0 2px 6px; color: var(--muted); font-size: 11px; font-weight: 510 }
+    .field label span { color: var(--quiet); font-weight: 400 }
+    input, select {
+      width: 100%;
+      height: 36px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      outline: none;
+      background: rgba(255,255,255,.025);
+      color: var(--text-2);
+      padding: 0 10px;
+      transition: border-color .15s ease, background .15s ease, box-shadow .15s ease;
+    }
+    input::placeholder { color: #555a62 }
+    input:hover, select:hover { background: rgba(255,255,255,.035) }
+    input:focus, select:focus { border-color: rgba(113,112,255,.7); box-shadow: 0 0 0 3px rgba(113,112,255,.1); background: rgba(255,255,255,.04) }
+    select { appearance: none; background-image: linear-gradient(45deg, transparent 50%, var(--quiet) 50%), linear-gradient(135deg, var(--quiet) 50%, transparent 50%); background-position: calc(100% - 14px) 15px, calc(100% - 10px) 15px; background-size: 4px 4px; background-repeat: no-repeat }
+    .search-button {
+      width: 100%;
+      height: 38px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      margin-top: 6px;
+      border: 1px solid #6867e7;
+      border-radius: 6px;
+      background: #5e6ad2;
+      color: #fff;
+      cursor: pointer;
+      font-weight: 590;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.12), 0 5px 18px rgba(38,37,102,.18);
+      transition: transform .12s ease, background .12s ease;
+    }
+    .search-button:hover { background: #6b76dc }
+    .search-button:active { transform: translateY(1px) }
+    .search-button svg { width: 14px; height: 14px }
+    .syntax-card { margin-top: 22px; padding: 12px; border: 1px solid var(--line-soft); border-radius: var(--radius); background: var(--surface) }
+    .syntax-card strong { display: block; margin-bottom: 5px; color: var(--text-2); font-size: 11px; font-weight: 590 }
+    .syntax-card p { margin: 0 0 9px; color: var(--quiet); font-size: 11px; line-height: 1.55 }
+    .query-example { display: flex; align-items: center; gap: 5px; flex-wrap: wrap }
+    .term { padding: 3px 6px; border-radius: 4px; border: 1px solid rgba(113,112,255,.2); background: rgba(113,112,255,.08); color: #a9b0ff; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace }
+    .term.exclude { border-color: rgba(251,113,133,.16); background: rgba(251,113,133,.06); color: #f49aaa }
+    .content { min-width: 0; display: flex; flex-direction: column; background: rgba(8,9,10,.68) }
+    .querybar { height: 66px; display: flex; align-items: center; gap: 14px; padding: 13px 18px; border-bottom: 1px solid var(--line-soft) }
+    .search-box { position: relative; flex: 1; max-width: 760px }
+    .search-box svg { position: absolute; left: 12px; top: 50%; width: 15px; height: 15px; transform: translateY(-50%); color: var(--quiet); pointer-events: none }
+    .search-box input { height: 40px; padding: 0 56px 0 36px; color: var(--text); background: rgba(255,255,255,.025) }
+    .search-key { position: absolute; right: 9px; top: 50%; transform: translateY(-50%); color: var(--quiet); border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace }
+    .result-total { margin-left: auto; white-space: nowrap; color: var(--muted); font-size: 11px }
+    .result-total strong { color: var(--text-2); font-size: 13px; font-weight: 590 }
+    .contextbar { min-height: 42px; display: flex; align-items: center; gap: 7px; padding: 7px 18px; border-bottom: 1px solid var(--line-soft); background: rgba(255,255,255,.009) }
+    .context-label { margin-right: 2px; color: var(--quiet); font-size: 10px; text-transform: uppercase; letter-spacing: .08em }
+    .filter-chip { display: inline-flex; align-items: center; gap: 5px; min-height: 24px; padding: 3px 8px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); background: rgba(255,255,255,.018); font-size: 10px; white-space: nowrap }
+    .filter-chip b { color: var(--text-2); font-weight: 510 }
+    .freshness { margin-left: auto; color: var(--quiet); font-size: 10px }
+    .log-frame { min-height: 0; flex: 1; display: flex; flex-direction: column }
+    .logs { min-height: 0; flex: 1; overflow: auto; font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace }
+    .row {
+      display: grid;
+      grid-template-columns: var(--column-layout, 164px minmax(120px, .8fr) minmax(118px, .72fr) 74px minmax(360px, 3fr));
+      gap: 12px;
+      align-items: start;
+      min-height: 35px;
+      padding: 7px 18px;
+      border-bottom: 1px solid var(--line-soft);
+      color: var(--text-2);
+      cursor: default;
+      transition: background .1s ease;
+    }
+    .row:not(.head):hover { background: var(--surface-hover) }
+    .row:not(.head):hover .message { color: var(--text) }
+    .row.expanded { background: var(--surface-active) }
+    .row.expanded .message { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text) }
+    .row.head {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      min-height: 34px;
+      align-items: center;
+      border-bottom-color: var(--line);
+      background: rgba(13,14,16,.97);
+      color: var(--quiet);
+      font: 10px/1.4 Inter, ui-sans-serif, sans-serif;
+      font-weight: 590;
+      letter-spacing: .075em;
+      text-transform: uppercase;
+      cursor: default;
+      backdrop-filter: blur(10px);
+    }
+    .row.head > [data-column] { position: relative; min-width: 0; padding-left: 12px; cursor: grab; user-select: none; outline: none; transition: color .12s ease, background .12s ease }
+    .row.head > [data-column]::before { content: "⠿"; position: absolute; left: 0; top: -1px; color: #464a52; font-size: 10px; letter-spacing: 0 }
+    .row.head > [data-column]:hover, .row.head > [data-column]:focus-visible { color: var(--text-2) }
+    .row.head > [data-column]:focus-visible { border-radius: 3px; box-shadow: 0 0 0 2px rgba(113,112,255,.28) }
+    .row.head > [data-column].dragging { opacity: .35 }
+    .row.head > [data-column].drop-before::after, .row.head > [data-column].drop-after::after { content: ""; position: absolute; top: -8px; bottom: -8px; width: 2px; border-radius: 2px; background: var(--accent); box-shadow: 0 0 10px rgba(113,112,255,.65) }
+    .row.head > [data-column].drop-before::after { left: -7px }
+    .row.head > [data-column].drop-after::after { right: -7px }
+    .column-hint { color: var(--quiet); font-size: 10px; white-space: nowrap }
+    .column-reset { border: 0; padding: 2px 4px; background: transparent; color: var(--quiet); cursor: pointer; font-size: 10px }
+    .column-reset:hover { color: var(--text-2) }
+    .cell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+    .time { color: var(--quiet); font-size: 11px; font-variant-numeric: tabular-nums }
+    .pod { color: #b8bdc7 }
+    .container { color: var(--muted) }
+    .stream-pill { display: inline-flex; width: fit-content; align-items: center; gap: 5px; padding: 1px 6px; border: 1px solid var(--line-soft); border-radius: 999px; color: var(--quiet); font: 9px/1.6 Inter, sans-serif; text-transform: uppercase }
+    .stream-pill::before { content: ""; width: 4px; height: 4px; border-radius: 50%; background: var(--green) }
+    .stream-pill.stderr { color: #ef9aa8; border-color: rgba(251,113,133,.14); background: rgba(251,113,133,.04) }
+    .stream-pill.stderr::before { background: var(--red) }
+    .message { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #c8ccd5; transition: color .1s ease }
+    .empty { display: grid; place-items: center; min-height: 360px; color: var(--quiet); text-align: center }
+    .empty-inner { max-width: 280px }
+    .empty-icon { width: 42px; height: 42px; display: grid; place-items: center; margin: 0 auto 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--quiet) }
+    .empty-icon svg { width: 20px }
+    .empty strong { display: block; margin-bottom: 4px; color: var(--muted); font: 12px Inter, sans-serif; font-weight: 590 }
+    .empty span { font: 11px Inter, sans-serif }
+    ::-webkit-scrollbar { width: 10px; height: 10px }
+    ::-webkit-scrollbar-track { background: transparent }
+    ::-webkit-scrollbar-thumb { border: 3px solid transparent; border-radius: 10px; background: #292c31; background-clip: padding-box }
+    ::-webkit-scrollbar-thumb:hover { background-color: #373a41 }
+    @media (max-width: 920px) {
+      body { overflow: auto }
+      .shell { grid-template-columns: 1fr; height: auto }
+      .sidebar { display: grid; grid-template-columns: repeat(4,minmax(120px,1fr)); gap: 0 10px; border-right: 0; border-bottom: 1px solid var(--line) }
+      .section-kicker, .syntax-card { display: none }
+      .search-button { margin-top: 21px }
+      .content { min-height: 70vh }
+      .row { grid-template-columns: 145px 120px 68px minmax(320px,1fr) }
+      .row .container { display: none }
+    }
+    @media (max-width: 650px) {
+      .breadcrumb, .shortcut, .freshness { display: none }
+      .topbar { padding-inline: 12px }
+      .sidebar { grid-template-columns: 1fr 1fr; padding: 14px 12px }
+      .search-button { margin-top: 6px }
+      .querybar, .contextbar { padding-inline: 12px }
+      .result-total { display: none }
+      .contextbar { overflow-x: auto }
+      .row { grid-template-columns: 124px 95px minmax(260px,1fr); padding-inline: 12px }
+      .row .container, .row .stream { display: none }
+    }
+    @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; transition: none !important } }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand-mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7v10M8 4v16M12 9v6M16 6v12M20 10v4"/></svg>
+    </div>
+    <div class="brand-copy"><h1>Influx Log Viewer</h1><span class="breadcrumb">/ kubernetes telemetry</span></div>
+    <div class="top-actions">
+      <span class="shortcut">/ Search</span>
+      <span id="status" class="connection reconnecting"><i class="status-dot"></i><span>connecting</span></span>
+    </div>
+  </header>
+
+  <div class="shell">
+    <aside class="sidebar">
+      <p class="section-kicker">Query scope</p>
+      <div class="field"><label for="namespace">Namespace <span>required</span></label><input id="namespace" value="influxdb3"></div>
+      <div class="field"><label for="pod">Pod <span>optional</span></label><input id="pod" placeholder="All pods"></div>
+      <div class="field"><label for="container">Container <span>optional</span></label><input id="container" placeholder="All containers"></div>
+      <div class="field"><label for="since">Time window</label><select id="since"><option value="15m">Last 15 minutes</option><option value="1h" selected>Last hour</option><option value="6h">Last 6 hours</option><option value="24h">Last 24 hours</option></select></div>
+      <button id="search" class="search-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>Run query</button>
+      <div class="syntax-card">
+        <strong>Exclude noisy events</strong>
+        <p>Prefix any word with a minus sign to omit matching messages.</p>
+        <div class="query-example"><span class="term">ingest</span><span class="term exclude">−pacha</span></div>
+      </div>
+    </aside>
+
+    <main class="content">
+      <div class="querybar">
+        <div class="search-box">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
+          <input id="q" type="search" autocomplete="off" spellcheck="false" aria-label="Search messages" placeholder="Search messages; use -term to exclude…">
+          <span class="search-key">/</span>
+        </div>
+        <span id="count" class="result-total"><strong>0</strong> events</span>
+      </div>
+      <div class="contextbar">
+        <span class="context-label">Active</span>
+        <span class="filter-chip">namespace <b id="scope-namespace">influxdb3</b></span>
+        <span class="filter-chip">window <b id="scope-window">1 hour</b></span>
+        <span id="scope-query" class="filter-chip" hidden>query <b></b></span>
+        <span class="column-hint">Drag headers to reorder · <button id="reset-columns" class="column-reset" type="button">reset</button></span>
+        <span id="freshness" class="freshness">Waiting for events</span>
+      </div>
+      <section class="log-frame" aria-label="Log results">
+        <div id="logs" class="logs">
+          <div class="row head"><span data-column="time" draggable="true" tabindex="0" title="Drag to move; Alt+Arrow keys also work">Time</span><span data-column="pod" draggable="true" tabindex="0" title="Drag to move; Alt+Arrow keys also work">Pod</span><span class="container" data-column="container" draggable="true" tabindex="0" title="Drag to move; Alt+Arrow keys also work">Container</span><span class="stream" data-column="stream" draggable="true" tabindex="0" title="Drag to move; Alt+Arrow keys also work">Stream</span><span data-column="message" draggable="true" tabindex="0" title="Drag to move; Alt+Arrow keys also work">Message</span></div>
+          <div class="empty"><div class="empty-inner"><div class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 5h16M4 12h10M4 19h7"/></svg></div><strong>Listening for log events</strong><span>Results will appear here as they arrive.</span></div></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const $ = selector => document.querySelector(selector);
+    const logs = $('#logs');
+    const head = logs.firstElementChild;
+    let rows = [];
+    let searchGeneration = 0;
+    let es;
+    const defaultColumnOrder = ['time', 'pod', 'container', 'stream', 'message'];
+    const columnWidths = { time: '164px', pod: 'minmax(120px,.8fr)', container: 'minmax(118px,.72fr)', stream: '74px', message: 'minmax(360px,3fr)' };
+    let columnOrder = loadColumnOrder();
+    let draggedColumn = null;
+
+    function loadColumnOrder() {
+      try {
+        const saved = JSON.parse(localStorage.getItem('log-column-order'));
+        if (Array.isArray(saved) && saved.length === defaultColumnOrder.length && defaultColumnOrder.every(column => saved.includes(column))) return saved;
+      } catch (_) {}
+      return [...defaultColumnOrder];
+    }
+
+    function clearDropIndicators() {
+      head.querySelectorAll('.drop-before,.drop-after').forEach(cell => cell.classList.remove('drop-before', 'drop-after'));
+    }
+
+    function applyColumnOrder(order, persist = true) {
+      columnOrder = [...order];
+      logs.style.setProperty('--column-layout', columnOrder.map(column => columnWidths[column]).join(' '));
+      logs.querySelectorAll('.row').forEach(row => {
+        columnOrder.forEach(column => {
+          const cell = row.querySelector(`[data-column="${column}"]`);
+          if (cell) row.append(cell);
+        });
+      });
+      if (persist) {
+        try { localStorage.setItem('log-column-order', JSON.stringify(columnOrder)); } catch (_) {}
+      }
+    }
+
+    function moveColumn(source, target, after = false) {
+      if (!source || !target || source === target) return;
+      const next = columnOrder.filter(column => column !== source);
+      let index = next.indexOf(target);
+      if (after) index++;
+      next.splice(index, 0, source);
+      applyColumnOrder(next);
+    }
+
+    function esc(value) {
+      const node = document.createElement('div');
+      node.textContent = value ?? '';
+      return node.innerHTML;
+    }
+
+    function setStatus(state, label) {
+      const status = $('#status');
+      status.className = 'connection ' + state;
+      status.querySelector('span').textContent = label;
+    }
+
+    function setCount() {
+      $('#count').innerHTML = `<strong>${rows.length.toLocaleString()}</strong> ${rows.length === 1 ? 'event' : 'events'}`;
+    }
+
+    function add(entry, front = true) {
+      const row = document.createElement('div');
+      row.className = 'row';
+      const date = new Date(entry.time);
+      const time = Number.isNaN(date.valueOf()) ? entry.time : date.toLocaleString();
+      const cells = {
+        time: `<span data-column="time" class="cell time" title="${esc(entry.time)}">${esc(time)}</span>`,
+        pod: `<span data-column="pod" class="cell pod" title="${esc(entry.pod)}">${esc(entry.pod)}</span>`,
+        container: `<span data-column="container" class="cell container" title="${esc(entry.container)}">${esc(entry.container)}</span>`,
+        stream: `<span data-column="stream" class="stream"><span class="stream-pill ${entry.stream === 'stderr' ? 'stderr' : ''}">${esc(entry.stream)}</span></span>`,
+        message: `<span data-column="message" class="message">${esc(entry.message)}</span>`
+      };
+      row.innerHTML = columnOrder.map(column => cells[column]).join('');
+      row.addEventListener('click', () => row.classList.toggle('expanded'));
+      logs.querySelector('.empty')?.remove();
+      front ? head.after(row) : logs.append(row);
+      rows.push(row);
+      if (rows.length > 1000) rows.shift().remove();
+      setCount();
+      $('#freshness').textContent = 'Updated just now';
+    }
+
+    function queryParams() {
+      return new URLSearchParams({
+        q: $('#q').value,
+        namespace: $('#namespace').value,
+        pod: $('#pod').value,
+        container: $('#container').value,
+        since: $('#since').value,
+        limit: '500'
+      });
+    }
+
+    function syncContext() {
+      $('#scope-namespace').textContent = $('#namespace').value || 'all';
+      $('#scope-window').textContent = $('#since').selectedOptions[0].textContent.replace('Last ', '');
+      const query = $('#q').value.trim();
+      const chip = $('#scope-query');
+      chip.hidden = !query;
+      chip.querySelector('b').textContent = query;
+    }
+
+    async function search() {
+      const generation = ++searchGeneration;
+      const params = queryParams();
+      setStatus('reconnecting', 'querying');
+      try {
+        const response = await fetch('/api/v1/logs?' + params);
+        if (!response.ok) throw Error(await response.text());
+        const data = await response.json();
+        if (generation !== searchGeneration) return;
+        rows.forEach(row => row.remove());
+        rows = [];
+        data.reverse().forEach(entry => add(entry));
+        setCount();
+        syncContext();
+        connect(params);
+      } catch (error) {
+        if (generation !== searchGeneration) return;
+        setStatus('error', 'query error');
+        $('#freshness').textContent = error.message;
+      }
+    }
+
+    function connect(params) {
+      es?.close();
+      es = new EventSource('/api/v1/stream?' + params);
+      es.addEventListener('log', event => add(JSON.parse(event.data)));
+      es.onopen = () => setStatus('', 'live');
+      es.onerror = () => setStatus('reconnecting', 'reconnecting');
+    }
+
+    head.addEventListener('dragstart', event => {
+      const cell = event.target.closest('[data-column]');
+      if (!cell) return;
+      draggedColumn = cell.dataset.column;
+      cell.classList.add('dragging');
+      event.dataTransfer.effectAllowed = 'move';
+      event.dataTransfer.setData('text/plain', draggedColumn);
+    });
+    head.addEventListener('dragover', event => {
+      const cell = event.target.closest('[data-column]');
+      if (!cell || cell.dataset.column === draggedColumn) return;
+      event.preventDefault();
+      clearDropIndicators();
+      const after = event.clientX > cell.getBoundingClientRect().left + cell.getBoundingClientRect().width / 2;
+      cell.classList.add(after ? 'drop-after' : 'drop-before');
+    });
+    head.addEventListener('drop', event => {
+      const cell = event.target.closest('[data-column]');
+      if (!cell) return;
+      event.preventDefault();
+      const after = event.clientX > cell.getBoundingClientRect().left + cell.getBoundingClientRect().width / 2;
+      moveColumn(draggedColumn || event.dataTransfer.getData('text/plain'), cell.dataset.column, after);
+      clearDropIndicators();
+    });
+    head.addEventListener('dragend', () => {
+      head.querySelector('.dragging')?.classList.remove('dragging');
+      clearDropIndicators();
+      draggedColumn = null;
+    });
+    head.addEventListener('keydown', event => {
+      const cell = event.target.closest('[data-column]');
+      if (!cell || !event.altKey || !['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+      event.preventDefault();
+      const index = columnOrder.indexOf(cell.dataset.column);
+      const targetIndex = event.key === 'ArrowLeft' ? index - 1 : index + 1;
+      if (targetIndex < 0 || targetIndex >= columnOrder.length) return;
+      const next = [...columnOrder];
+      [next[index], next[targetIndex]] = [next[targetIndex], next[index]];
+      applyColumnOrder(next);
+      head.querySelector(`[data-column="${cell.dataset.column}"]`)?.focus();
+    });
+    $('#reset-columns').addEventListener('click', () => applyColumnOrder(defaultColumnOrder));
+    applyColumnOrder(columnOrder, false);
+
+    $('#search').addEventListener('click', search);
+    $('#q').addEventListener('keydown', event => { if (event.key === 'Enter') search(); });
+    document.addEventListener('keydown', event => {
+      if (event.key === '/' && !/INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) {
+        event.preventDefault();
+        $('#q').focus();
+      }
+    });
+    search();
+  </script>
+</body>
+</html>

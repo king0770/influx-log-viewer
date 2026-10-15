@@ -1,0 +1,16 @@
+domain: influxdata.com
+layout:
+- go.kubebuilder.io/v4
+projectName: influx-log-viewer
+repo: github.com/influxdata/influx-log-viewer
+version: "3"
+resources:
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: influxdata.com
+  group: observability
+  kind: LogPipeline
+  path: github.com/influxdata/influx-log-viewer/api/v1alpha1
+  version: v1alpha1
